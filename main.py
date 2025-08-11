@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 from rich.console import Console
 from rich.prompt import Prompt
+from string import Template
 from dotenv import load_dotenv
 
 from llm_provider import LLM
@@ -12,7 +13,7 @@ load_dotenv()
 console = Console()
 llm = LLM()
 
-SYSTEM_PROMPT = """Ты помощник по расписанию и задачам.
+SYSTEM_PROMPT_TPL = """Ты помощник по расписанию и задачам.
 Твоя задача — преобразовать фразу пользователя в JSON-команду со строгой схемой:
 
 {
@@ -21,7 +22,7 @@ SYSTEM_PROMPT = """Ты помощник по расписанию и задач
 }
 
 Правила:
-- Даты и время всегда в ISO 8601 (локаль пользователя, сейчас: {now_iso}).
+- Даты и время всегда в ISO 8601 (локаль пользователя, сейчас: $now_iso).
 - Если говорится «завтра/послезавтра/сегодня в 15:00», рассчитай конкретный ISO.
 - Для add_task: payload = {"text": str, "due": str | null}
 - Для complete_task: payload = {"id": str}  # можно принимать префикс UUID
@@ -31,14 +32,15 @@ SYSTEM_PROMPT = """Ты помощник по расписанию и задач
 
 Примеры:
 "Добавь задачу купить молоко завтра в 18:00" ->
-{"intent":"add_task","payload":{"text":"купить молоко","due":"{tomorrow_1800}"}}
+{"intent":"add_task","payload":{"text":"купить молоко","due":"$tomorrow_1800"}}
 
 "Создай событие 'Звонок с Петром' послезавтра в 09:30 на 30 минут" ->
-{"intent":"add_event","payload":{"title":"Звонок с Петром","start":"{after_tomorrow_0930}","duration_min":30}}
+{"intent":"add_event","payload":{"title":"Звонок с Петром","start":"$after_tomorrow_0930","duration_min":30}}
 
 "Покажи мои задачи" -> {"intent":"list_tasks","payload":{}}
 "Покажи повестку на сегодня" -> {"intent":"agenda","payload":{"day":"today"}}
 """
+
 
 def slash_command(text: str) -> bool:
     """
@@ -135,13 +137,15 @@ def main():
 
         # Иначе — пробуем «умный» парсинг через LLM
         now_iso = datetime.now().replace(microsecond=0).isoformat()
-        sys_prompt = SYSTEM_PROMPT.format(
+        tpl = Template(SYSTEM_PROMPT_TPL)
+        sys_prompt = tpl.substitute(
             now_iso=now_iso,
             tomorrow_1800=(datetime.now().replace(hour=18, minute=0, second=0, microsecond=0)
                            + timedelta(days=1)).isoformat(),
             after_tomorrow_0930=(datetime.now().replace(hour=9, minute=30, second=0, microsecond=0)
-                           + timedelta(days=2)).isoformat()
+                                 + timedelta(days=2)).isoformat()
         )
+
         try:
             cmd = llm.ask_json(sys_prompt, text)
         except Exception as e:

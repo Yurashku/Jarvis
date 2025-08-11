@@ -6,7 +6,7 @@ from string import Template
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandObject
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -61,8 +61,20 @@ def _human(dt_iso: str) -> str:
         return f"{dt_iso} (через {mins} мин)"
     return dt_iso
 
+def task_keyboard(id8: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Готово ✅", callback_data=f"t:done:{id8}"),
+        InlineKeyboardButton(text="Отложить 10 мин", callback_data=f"t:snooze10:{id8}"),
+    ], [
+        InlineKeyboardButton(text="Отложить 1 час", callback_data=f"t:snooze60:{id8}"),
+    ]])
+
 async def send_task_reminder(chat_id: int, text: str, short_id: str):
-    await bot.send_message(chat_id, f"⏰ Напоминание: {text} (id {short_id})")
+    await bot.send_message(
+        chat_id,
+        f"⏰ Напоминание: {text} (id {short_id})",
+        reply_markup=task_keyboard(short_id)
+    )
 
 async def send_event_reminder(chat_id: int, title: str, start_iso: str, short_id: str):
     when = datetime.fromisoformat(start_iso).strftime("%Y-%m-%d %H:%M")
@@ -81,6 +93,7 @@ def schedule_task_if_due(task: dict):
         return
     scheduler.add_job(
         send_task_reminder, "date", run_date=dt,
+        id=f"task:{task['id']}", replace_existing=True,
         args=[owner, task["text"], task["id"][:8]]
     )
 
@@ -97,6 +110,7 @@ def schedule_event_if_due(ev: dict):
         return
     scheduler.add_job(
         send_event_reminder, "date", run_date=dt,
+        id=f"event:{ev['id']}", replace_existing=True,
         args=[owner, ev["title"], ev["start"], ev["id"][:8]]
     )
 
@@ -142,7 +156,11 @@ async def cmd_task(message: Message, command: CommandObject):
         return
     item = store.add_task(m.group(1).strip(), m.group(2), owner=message.chat.id)
     schedule_task_if_due(item)
-    await message.answer(f"✅ Добавил задачу: {item['text']} [id {item['id'][:8]}]{' (срок: ' + _human(item['due']) + ')' if item['due'] else ''}")
+    kb = task_keyboard(item['id'][:8])
+    await message.answer(
+        f"✅ Добавил задачу: {item['text']} [id {item['id'][:8]}]{' (срок: ' + _human(item['due']) + ')' if item['due'] else ''}",
+        reply_markup=kb
+    )
 
 @dp.message(Command("event"))
 async def cmd_event(message: Message, command: CommandObject):
@@ -170,12 +188,12 @@ async def cmd_list(message: Message):
     if not tasks:
         await message.answer("Задач нет.")
         return
-    lines = []
     for t in tasks:
         done = "✅" if t["done"] else "🔹"
         due = f" (срок: { _human(t['due']) })" if t["due"] else ""
-        lines.append(f"{done} [{t['id'][:8]}] {t['text']}{due}")
-    await message.answer("\n".join(lines))
+        text = f"{done} [{t['id'][:8]}] {t['text']}{due}"
+        kb = None if t["done"] else task_keyboard(t["id"][:8])
+        await message.answer(text, reply_markup=kb)
 
 @dp.message(Command("agenda"))
 async def cmd_agenda(message: Message, command: CommandObject):
@@ -219,7 +237,11 @@ async def handle_free_text(message: Message):
         if intent == "add_task":
             item = store.add_task(payload["text"], payload.get("due"), owner=message.chat.id)
             schedule_task_if_due(item)
-            await message.answer(f"✅ Добавил задачу: {item['text']} [id {item['id'][:8]}]{' (срок: ' + _human(item['due']) + ')' if item['due'] else ''}")
+            kb = task_keyboard(item['id'][:8])
+            await message.answer(
+                f"✅ Добавил задачу: {item['text']} [id {item['id'][:8]}]{' (срок: ' + _human(item['due']) + ')' if item['due'] else ''}",
+                reply_markup=kb
+            )
         elif intent == "list_tasks":
             await cmd_list(message)
         elif intent == "complete_task":
@@ -237,9 +259,49 @@ async def handle_free_text(message: Message):
     except Exception as e:
         await message.answer(f"Ошибка выполнения: {e}")
 
+@dp.callback_query(F.data.startswith("t:"))
+async def on_task_action(q: CallbackQuery):
+    try:
+        _, action, id8 = q.data.split(":")
+    except Exception:
+        await q.answer("Некорректные данные", show_alert=True)
+        return
+
+    chat_id = q.message.chat.id
+
+    if action == "done":
+        ok = store.complete_task(id8, owner=chat_id)
+        if ok:
+            new_text = (q.message.text or "") + "\nСтатус: ✅ Готово"
+            await q.message.edit_text(new_text)
+            await q.answer("Отмечено как готово")
+        else:
+            await q.answer("Задача не найдена", show_alert=True)
+        return
+
+    if action.startswith("snooze"):
+        minutes = 10 if action == "snooze10" else 60
+        t = store.snooze_task(id8, minutes, owner=chat_id)
+        if not t:
+            await q.answer("Задача не найдена", show_alert=True)
+            return
+        schedule_task_if_due(t)
+        base_text = q.message.text.split("\n")[0] if q.message.text else ""
+        await q.message.edit_text(
+            f"{base_text}\nНовый срок: { _human(t['due']) }",
+            reply_markup=task_keyboard(t["id"][:8])
+        )
+        await q.answer(f"Отложено на {minutes} мин")
+        return
+
+    await q.answer("Неизвестное действие", show_alert=True)
+
 async def main():
     scheduler.start()
-    rehydrate_all_jobs()
+    try:
+        rehydrate_all_jobs()
+    except Exception as e:
+        print(f"[rehydrate] warning: {e}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

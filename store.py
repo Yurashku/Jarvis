@@ -2,7 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from uuid import uuid4
 
@@ -78,6 +78,24 @@ def complete_task(task_id_prefix: str, owner: Optional[int] = None) -> bool:
     if ok:
         _save(TASKS_PATH, tasks)
     return ok
+
+def get_task_by_prefix(task_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict]:
+    tasks = _load(TASKS_PATH)
+    for t in tasks:
+        if t["id"].startswith(task_id_prefix) and (owner is None or t.get("owner") == owner):
+            return t
+    return None
+
+def snooze_task(task_id_prefix: str, minutes: int, owner: Optional[int] = None) -> Optional[Dict]:
+    tasks = _load(TASKS_PATH)
+    for t in tasks:
+        if t["id"].startswith(task_id_prefix) and (owner is None or t.get("owner") == owner):
+            base = datetime.fromisoformat(t["due"]) if t.get("due") else datetime.now()
+            new_due = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+            t["due"] = new_due
+            _save(TASKS_PATH, tasks)
+            return t
+    return None
 
 # ---------- Events ----------
 def add_event(title: str, start_iso: str, duration_min: int = 60, owner: Optional[int] = None) -> Dict:

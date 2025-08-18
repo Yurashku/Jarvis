@@ -1,0 +1,22 @@
+# Jarvis assistant dependencies
+# Install these with `pip install -r requirements.txt`
+
+# Core functionality
+python-dotenv>=1.0.0  # load environment variables from .env
+rich>=13.5.0           # rich console output for CLI
+apscheduler>=3.10.0    # scheduling reminders and notifications
+rapidfuzz>=3.0.0       # fuzzy matching for task completion
+
+# Messaging and bot
+aiogram>=3.4.0         # Telegram bot framework
+
+# Language models
+openai>=1.13.3         # OpenAI API client (optional for remote LLM/STT)
+ollama>=0.1.8          # Ollama client for local LLMs (optional)
+
+# Speech to text
+vosk>=0.3.45           # Offline speech recognition engine (optional)
+
+# Additional libraries
+pytz>=2023.3           # Timezone handling (if needed)
+dateparser>=1.2.0      # Parsing natural language dates (optional, used by models)

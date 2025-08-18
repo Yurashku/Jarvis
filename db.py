@@ -8,7 +8,9 @@ creating all tables, indexes and the FTS5 search table.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 DB_PATH = Path("data") / "jarvis.db"
@@ -64,6 +66,40 @@ def init_db() -> None:
             """
         )
         conn.commit()
+        migrate_times_to_utc(conn)
+
+
+def _to_utc(s: str) -> str:
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        return s
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(ZoneInfo("UTC")).isoformat()
+
+
+def migrate_times_to_utc(conn: sqlite3.Connection) -> None:
+    """Ensure all stored timestamps are normalised to UTC."""
+    tables = {
+        "tasks": ["due", "created_at"],
+        "events": ["start", "created_at"],
+        "reminders": ["at", "created_at"],
+    }
+    for table, cols in tables.items():
+        rows = conn.execute(f"SELECT id, {', '.join(cols)} FROM {table}").fetchall()
+        for row in rows:
+            for col in cols:
+                val = row[col]
+                if not val:
+                    continue
+                utc_val = _to_utc(val)
+                if utc_val != val:
+                    conn.execute(
+                        f"UPDATE {table} SET {col} = ? WHERE id = ?",
+                        (utc_val, row["id"]),
+                    )
+    conn.commit()
 
 
 # Ensure tables exist when the module is imported

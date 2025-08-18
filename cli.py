@@ -22,6 +22,7 @@ import re
 import sys
 import threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from string import Template
 from typing import Optional
 
@@ -37,6 +38,13 @@ import subprocess
 
 # Load environment variables from .env for local development
 load_dotenv()
+
+
+def _local_tz():
+    try:
+        return ZoneInfo("local")
+    except Exception:
+        return datetime.now().astimezone().tzinfo
 
 
 def _startup_checks() -> None:
@@ -72,7 +80,7 @@ console = Console()
 llm = LLM()
 
 # Background scheduler to deliver notifications to the console
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(timezone=ZoneInfo("UTC"))
 
 # System prompt for LLM instructions, extended with examples
 SYSTEM_PROMPT_TPL = """Ты помощник по расписанию и задачам.
@@ -110,11 +118,12 @@ SYSTEM_PROMPT_TPL = """Ты помощник по расписанию и зад
 
 def _human(dt_iso: str) -> str:
     """Return a friendly representation of a datetime (relative today/tomorrow)."""
+    tz = _local_tz()
     try:
-        dt = datetime.fromisoformat(dt_iso)
+        dt = datetime.fromisoformat(dt_iso).astimezone(tz)
     except Exception:
         return dt_iso
-    now = datetime.now()
+    now = datetime.now(tz=tz)
     if dt.date() == now.date():
         prefix = "сегодня"
     elif dt.date() == (now.date() + timedelta(days=1)):
@@ -127,10 +136,10 @@ def _human(dt_iso: str) -> str:
 def schedule_console_notification(message: str, run_at_iso: str) -> None:
     """Schedule a console notification for the given time."""
     try:
-        dt = datetime.fromisoformat(run_at_iso)
+        dt = datetime.fromisoformat(run_at_iso).astimezone(ZoneInfo("UTC"))
     except Exception:
         return
-    if dt <= datetime.now():
+    if dt <= datetime.now(tz=ZoneInfo("UTC")):
         return
     def notify() -> None:
         console.print(f"[bold yellow]Напоминание:[/bold yellow] {message}")
@@ -324,16 +333,24 @@ def slash_command(text: str) -> bool:
     # /agenda day
     if text.startswith("/agenda"):
         arg = text.replace("/agenda", "").strip().lower() or "today"
-        day = arg
-        if day == "today":
-            date_str = datetime.now().date().isoformat()
-        elif day == "tomorrow":
-            date_str = (datetime.now() + timedelta(days=1)).date().isoformat()
+        tz = _local_tz()
+        if arg == "today":
+            target_date = datetime.now(tz=tz).date()
+        elif arg == "tomorrow":
+            target_date = (datetime.now(tz=tz) + timedelta(days=1)).date()
         else:
-            date_str = day
-        events = [e for e in store.list_events(owner=None) if e["start"].startswith(date_str)]
+            try:
+                target_date = datetime.fromisoformat(arg).date()
+            except Exception:
+                console.print("[red]Неверная дата[/red]")
+                return True
+        events = [
+            e
+            for e in store.list_events(owner=None)
+            if datetime.fromisoformat(e["start"]).astimezone(tz).date() == target_date
+        ]
         if not events:
-            console.print(f"[yellow]Событий на {date_str} нет.[/yellow]")
+            console.print(f"[yellow]Событий на {target_date.isoformat()} нет.[/yellow]")
         else:
             for e in events:
                 console.print(
@@ -424,23 +441,22 @@ def process_free_text(user_text: str) -> None:
         return
 
     # Build system prompt with current timestamps for relative examples
-    now_iso = datetime.now().replace(microsecond=0).isoformat()
+    tz = _local_tz()
+    now = datetime.now(tz=tz)
+    now_iso = now.replace(microsecond=0).isoformat()
     tpl = Template(SYSTEM_PROMPT_TPL)
     sys_prompt = tpl.substitute(
         now_iso=now_iso,
         tomorrow_1800=(
-            datetime.now()
-            .replace(hour=18, minute=0, second=0, microsecond=0)
+            now.replace(hour=18, minute=0, second=0, microsecond=0)
             + timedelta(days=1)
         ).isoformat(),
         after_tomorrow_0930=(
-            datetime.now()
-            .replace(hour=9, minute=30, second=0, microsecond=0)
+            now.replace(hour=9, minute=30, second=0, microsecond=0)
             + timedelta(days=2)
         ).isoformat(),
         tomorrow_0900=(
-            datetime.now()
-            .replace(hour=9, minute=0, second=0, microsecond=0)
+            now.replace(hour=9, minute=0, second=0, microsecond=0)
             + timedelta(days=1)
         ).isoformat(),
     )

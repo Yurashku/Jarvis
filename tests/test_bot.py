@@ -19,6 +19,9 @@ class DummyMessage:
 @pytest.fixture
 def bot_module(monkeypatch):
     monkeypatch.setenv("TELEGRAM_TOKEN", "123:ABC")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("STT_PROVIDER", "openai")
     import bot
     importlib.reload(bot)
     return bot

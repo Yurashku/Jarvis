@@ -13,6 +13,7 @@ search facility.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -39,11 +40,24 @@ def add_task(
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
     task_id = str(uuid4())
-    created_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        created_at_dt = datetime.now(tz=ZoneInfo("local"))
+    except Exception:
+        created_at_dt = datetime.now().astimezone()
+    created_at = created_at_dt.astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO tasks (id, text, due, done, owner, created_at) VALUES (?,?,?,?,?,?)",
-            (task_id, text, due_iso, 0, owner, created_at),
+            (
+                task_id,
+                text,
+                datetime.fromisoformat(due_iso).astimezone(ZoneInfo("UTC")).isoformat()
+                if due_iso
+                else None,
+                0,
+                owner,
+                created_at,
+            ),
         )
         conn.execute(
             "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
@@ -52,7 +66,9 @@ def add_task(
     return {
         "id": task_id,
         "text": text,
-        "due": due_iso,
+        "due": datetime.fromisoformat(due_iso).astimezone(ZoneInfo("UTC")).isoformat()
+        if due_iso
+        else None,
         "done": False,
         "owner": owner,
         "created_at": created_at,
@@ -99,9 +115,11 @@ def snooze_task(
     if not task:
         return None
     base = (
-        datetime.fromisoformat(task["due"]) if task.get("due") else datetime.now()
+        datetime.fromisoformat(task["due"]) if task.get("due") else datetime.now(tz=ZoneInfo("UTC"))
     )
-    new_due = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    new_due = (
+        base + timedelta(minutes=minutes)
+    ).replace(microsecond=0).astimezone(ZoneInfo("UTC")).isoformat()
     with get_conn() as conn:
         conn.execute("UPDATE tasks SET due = ? WHERE id = ?", (new_due, task["id"]))
     task["due"] = new_due
@@ -120,14 +138,25 @@ def add_event(
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
     event_id = str(uuid4())
-    created_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        created_at_dt = datetime.now(tz=ZoneInfo("local"))
+    except Exception:
+        created_at_dt = datetime.now().astimezone()
+    created_at = created_at_dt.astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
     with get_conn() as conn:
         conn.execute(
             """
             INSERT INTO events (id, title, start, duration_min, owner, created_at)
             VALUES (?,?,?,?,?,?)
             """,
-            (event_id, title, start_iso, int(duration_min), owner, created_at),
+            (
+                event_id,
+                title,
+                datetime.fromisoformat(start_iso).astimezone(ZoneInfo("UTC")).isoformat(),
+                int(duration_min),
+                owner,
+                created_at,
+            ),
         )
         conn.execute(
             "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
@@ -136,7 +165,7 @@ def add_event(
     return {
         "id": event_id,
         "title": title,
-        "start": start_iso,
+        "start": datetime.fromisoformat(start_iso).astimezone(ZoneInfo("UTC")).isoformat(),
         "duration_min": int(duration_min),
         "owner": owner,
         "created_at": created_at,
@@ -190,8 +219,20 @@ def update_event_time(
     if not event:
         return None
     with get_conn() as conn:
-        conn.execute("UPDATE events SET start = ? WHERE id = ?", (new_start_iso, event["id"]))
-    event["start"] = new_start_iso
+        conn.execute(
+            "UPDATE events SET start = ? WHERE id = ?",
+            (
+                datetime.fromisoformat(new_start_iso)
+                .astimezone(ZoneInfo("UTC"))
+                .isoformat(),
+                event["id"],
+            ),
+        )
+    event["start"] = (
+        datetime.fromisoformat(new_start_iso)
+        .astimezone(ZoneInfo("UTC"))
+        .isoformat()
+    )
     return event
 
 
@@ -217,7 +258,9 @@ def snooze_event(
     if not event:
         return None
     base = datetime.fromisoformat(event["start"])
-    new_start = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    new_start = (
+        base + timedelta(minutes=minutes)
+    ).replace(microsecond=0).astimezone(ZoneInfo("UTC")).isoformat()
     with get_conn() as conn:
         conn.execute("UPDATE events SET start = ? WHERE id = ?", (new_start, event["id"]))
     event["start"] = new_start
@@ -250,11 +293,21 @@ def add_reminder(
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
     rem_id = str(uuid4())
-    created_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        created_at_dt = datetime.now(tz=ZoneInfo("local"))
+    except Exception:
+        created_at_dt = datetime.now().astimezone()
+    created_at = created_at_dt.astimezone(ZoneInfo("UTC")).isoformat(timespec="seconds")
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO reminders (id, text, at, owner, created_at) VALUES (?,?,?,?,?)",
-            (rem_id, text, at_iso, owner, created_at),
+            (
+                rem_id,
+                text,
+                datetime.fromisoformat(at_iso).astimezone(ZoneInfo("UTC")).isoformat(),
+                owner,
+                created_at,
+            ),
         )
         conn.execute(
             "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
@@ -263,7 +316,7 @@ def add_reminder(
     return {
         "id": rem_id,
         "text": text,
-        "at": at_iso,
+        "at": datetime.fromisoformat(at_iso).astimezone(ZoneInfo("UTC")).isoformat(),
         "owner": owner,
         "created_at": created_at,
     }
@@ -300,7 +353,9 @@ def snooze_reminder(
     if not rem:
         return None
     base = datetime.fromisoformat(rem["at"])
-    new_at = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    new_at = (
+        base + timedelta(minutes=minutes)
+    ).replace(microsecond=0).astimezone(ZoneInfo("UTC")).isoformat()
     with get_conn() as conn:
         conn.execute("UPDATE reminders SET at = ? WHERE id = ?", (new_at, rem["id"]))
     rem["at"] = new_at

@@ -30,6 +30,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from string import Template
 
@@ -49,6 +50,13 @@ from llm_provider import LLM
 from stt import STT
 
 load_dotenv()
+
+
+def _local_tz():
+    try:
+        return ZoneInfo("local")
+    except Exception:
+        return datetime.now().astimezone().tzinfo
 
 
 def _startup_checks() -> None:
@@ -110,7 +118,7 @@ bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()
 llm = LLM()
 stt = STT()
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=ZoneInfo("UTC"))
 
 
 # System prompt template for LLM
@@ -149,11 +157,12 @@ SYSTEM_PROMPT_TPL = """Ты помощник по расписанию и зад
 
 # Helper to humanise dates
 def _human(dt_iso: str) -> str:
+    tz = _local_tz()
     try:
-        dt = datetime.fromisoformat(dt_iso)
+        dt = datetime.fromisoformat(dt_iso).astimezone(tz)
     except Exception:
         return dt_iso
-    now = datetime.now()
+    now = datetime.now(tz=tz)
     if dt.date() == now.date():
         prefix = "сегодня"
     elif dt.date() == (now.date() + timedelta(days=1)):
@@ -251,10 +260,10 @@ def schedule_task_if_due(task: dict) -> None:
     if not due or not owner or task.get("done"):
         return
     try:
-        dt = datetime.fromisoformat(due)
+        dt = datetime.fromisoformat(due).astimezone(ZoneInfo("UTC"))
     except Exception:
         return
-    if dt <= datetime.now():
+    if dt <= datetime.now(tz=ZoneInfo("UTC")):
         return
     scheduler.add_job(
         send_task_reminder,
@@ -272,10 +281,10 @@ def schedule_event_if_due(ev: dict) -> None:
     if not start or not owner:
         return
     try:
-        dt = datetime.fromisoformat(start)
+        dt = datetime.fromisoformat(start).astimezone(ZoneInfo("UTC"))
     except Exception:
         return
-    if dt <= datetime.now():
+    if dt <= datetime.now(tz=ZoneInfo("UTC")):
         return
     scheduler.add_job(
         send_event_reminder,
@@ -293,10 +302,10 @@ def schedule_reminder_if_due(rem: dict) -> None:
     if not at or not owner:
         return
     try:
-        dt = datetime.fromisoformat(at)
+        dt = datetime.fromisoformat(at).astimezone(ZoneInfo("UTC"))
     except Exception:
         return
-    if dt <= datetime.now():
+    if dt <= datetime.now(tz=ZoneInfo("UTC")):
         return
     scheduler.add_job(
         send_reminder,
@@ -468,15 +477,24 @@ async def cmd_event_delete(message: Message, command: CommandObject) -> None:
 @dp.message(Command("agenda"))
 async def cmd_agenda(message: Message, command: CommandObject) -> None:
     arg = (command.args or "").strip().lower() or "today"
+    tz = _local_tz()
     if arg == "today":
-        date_str = datetime.now().date().isoformat()
+        target_date = datetime.now(tz=tz).date()
     elif arg == "tomorrow":
-        date_str = (datetime.now() + timedelta(days=1)).date().isoformat()
+        target_date = (datetime.now(tz=tz) + timedelta(days=1)).date()
     else:
-        date_str = arg
-    events = [e for e in store.list_events(owner=message.chat.id) if e["start"].startswith(date_str)]
+        try:
+            target_date = datetime.fromisoformat(arg).date()
+        except Exception:
+            await message.answer("Неверная дата")
+            return
+    events = [
+        e
+        for e in store.list_events(owner=message.chat.id)
+        if datetime.fromisoformat(e["start"]).astimezone(tz).date() == target_date
+    ]
     if not events:
-        await message.answer(f"Событий на {date_str} нет.")
+        await message.answer(f"Событий на {target_date.isoformat()} нет.")
         return
     for e in events:
         await message.answer(
@@ -599,23 +617,22 @@ async def process_free_text(message: Message, user_text: str) -> None:
         return
 
     # Build system prompt
-    now_iso = datetime.now().replace(microsecond=0).isoformat()
+    tz = _local_tz()
+    now = datetime.now(tz=tz)
+    now_iso = now.replace(microsecond=0).isoformat()
     tpl = Template(SYSTEM_PROMPT_TPL)
     sys_prompt = tpl.substitute(
         now_iso=now_iso,
         tomorrow_1800=(
-            datetime.now()
-            .replace(hour=18, minute=0, second=0, microsecond=0)
+            now.replace(hour=18, minute=0, second=0, microsecond=0)
             + timedelta(days=1)
         ).isoformat(),
         after_tomorrow_0930=(
-            datetime.now()
-            .replace(hour=9, minute=30, second=0, microsecond=0)
+            now.replace(hour=9, minute=30, second=0, microsecond=0)
             + timedelta(days=2)
         ).isoformat(),
         tomorrow_0900=(
-            datetime.now()
-            .replace(hour=9, minute=0, second=0, microsecond=0)
+            now.replace(hour=9, minute=0, second=0, microsecond=0)
             + timedelta(days=1)
         ).isoformat(),
     )

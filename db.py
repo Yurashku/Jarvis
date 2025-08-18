@@ -49,6 +49,16 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_events_owner ON events(owner);
             CREATE INDEX IF NOT EXISTS idx_events_start ON events(start);
 
+            CREATE TABLE IF NOT EXISTS recurring_events (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                rrule TEXT NOT NULL,
+                duration_min INTEGER NOT NULL,
+                owner INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_recurring_events_owner ON recurring_events(owner);
+
             CREATE TABLE IF NOT EXISTS reminders (
                 id TEXT PRIMARY KEY,
                 text TEXT NOT NULL,

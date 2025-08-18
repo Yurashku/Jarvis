@@ -19,6 +19,7 @@ def test_pick_provider(monkeypatch, tmp_path):
         m.setenv("STT_PROVIDER", "auto")
         m.delenv("VOSK_MODEL_DIR", raising=False)
         m.setenv("OPENAI_API_KEY", "x")
+        m.setattr(stt.STT, "_ping_openai", lambda self: True)
         assert stt.STT().provider_in_use() == "openai"
 
 

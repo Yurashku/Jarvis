@@ -10,7 +10,7 @@ reminders are persisted via the ``store`` module.  A background
 scheduler delivers notifications for upcoming deadlines directly to
 the console.
 
-Run this script with ``python cli.py``.  It will load environment
+Run via ``jarvis-cli`` or ``python -m jarvis.cli``.  It will load environment
 variables from a ``.env`` file if present.
 
 """
@@ -30,8 +30,8 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.prompt import Prompt
 
-import store
-from llm_provider import LLM
+from . import store
+from .llm_provider import LLM
 
 
 # Load environment variables from .env for local development

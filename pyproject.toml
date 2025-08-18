@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Personal assistant with CLI and Telegram bot"
+readme = "README.md"
+authors = [{name = "Jarvis contributors"}]
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "rich>=13.5.0",
+    "apscheduler>=3.10.0",
+    "rapidfuzz>=3.0.0",
+    "aiogram>=3.4.0",
+    "openai>=1.13.3",
+    "ollama>=0.1.8",
+    "vosk>=0.3.45",
+    "pytz>=2023.3",
+    "dateparser>=1.2.0",
+]
+
+[project.scripts]
+jarvis-cli = "jarvis.cli:main"
+jarvis-bot = "jarvis.bot:run"

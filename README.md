@@ -13,7 +13,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 * **Inline keyboards** – in Telegram you can mark tasks as done, snooze tasks/events/reminders (+10 min, +1 hour) or delete them with a tap.
 * **Speech to text** – send voice or audio messages and Jarvis will transcribe them using offline Vosk or online Whisper and process as normal commands.
 * **Local‑first** – tasks, events and reminders are stored in JSON files in the `data/` folder.  No data is sent anywhere unless you configure a cloud model for LLM/STT.
-* **Flexible language models** – use a local model via [Ollama](https://ollama.com) by default or switch to OpenAI by changing environment variables.  The system prompt is defined in `bot.py`/`cli.py`.
+* **Flexible language models** – use a local model via [Ollama](https://ollama.com) by default or switch to OpenAI by changing environment variables.  The system prompt is defined in `jarvis/bot.py`/`jarvis/cli.py`.
 
 ## Installation
 
@@ -21,7 +21,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 
    ```sh
    git clone https://github.com/Yurashku/Jarvis.git
-   cd Jarvis/jarvis
+   cd Jarvis
    ```
 
 2. **Create a virtual environment** and install dependencies:
@@ -30,7 +30,9 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
    python -m venv venv
    source venv/bin/activate  # or `venv\Scripts\activate` on Windows
    pip install --upgrade pip
-   pip install -r requirements.txt
+   pip install .
+   # or install the published package
+   # pip install jarvis
    ```
 
 3. **Install ffmpeg** (required for voice transcription).  On Windows you can use [Scoop](https://scoop.sh) or [Winget](https://learn.microsoft.com/windows/package-manager/winget/) to install `ffmpeg`.  Alternatively download a static build and add it to your `PATH`.  Set `FFMPEG_BIN` in your `.env` if it is not in the `PATH`.
@@ -48,7 +50,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 5. **Run the command‑line interface** (optional):
 
    ```sh
-   python cli.py
+   jarvis-cli
    ```
 
    Jarvis will greet you and you can start typing commands or natural language.  Type `/exit` to quit.
@@ -56,7 +58,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 6. **Run the Telegram bot**:
 
    ```sh
-   python bot.py
+   jarvis-bot
    ```
 
    Start chatting with your bot in Telegram.  The bot automatically schedules reminders for tasks, events and reminders and resumes them on restart.
@@ -73,11 +75,11 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 
 ## Project structure
 
-* `cli.py` – интерактивный интерфейс для терминала с поддержкой LLM, команд и запланированных уведомлений.
-* `bot.py` – реализация Telegram‑бота на aiogram.  Содержит хендлеры команд, обработку естественного языка, inline‑кнопки и планировщик.
-* `store.py` – модуль для хранения задач, событий и напоминаний.  Использует JSON‑файлы и поддерживает многопользовательский режим (поле `owner`).
-* `llm_provider.py` – абстракция над языковыми моделями.  Выбирает Ollama или OpenAI в зависимости от переменных окружения и предоставляет методы `ask` и `ask_json`.
-* `stt.py` – модуль для распознавания речи.  Работает через офлайн Vosk или онлайн OpenAI Whisper.  Требуется ffmpeg для конвертации аудио.
+* `jarvis/cli.py` – интерактивный интерфейс для терминала с поддержкой LLM, команд и запланированных уведомлений.
+* `jarvis/bot.py` – реализация Telegram‑бота на aiogram.  Содержит хендлеры команд, обработку естественного языка, inline‑кнопки и планировщик.
+* `jarvis/store.py` – модуль для хранения задач, событий и напоминаний.  Использует JSON‑файлы и поддерживает многопользовательский режим (поле `owner`).
+* `jarvis/llm_provider.py` – абстракция над языковыми моделями.  Выбирает Ollama или OpenAI в зависимости от переменных окружения и предоставляет методы `ask` и `ask_json`.
+* `jarvis/stt.py` – модуль для распознавания речи.  Работает через офлайн Vosk или онлайн OpenAI Whisper.  Требуется ffmpeg для конвертации аудио.
 * `data/` – папка для сохранения JSON‑файлов с вашими данными.  Создаётся автоматически.
 
 ## Contributing

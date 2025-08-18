@@ -11,6 +11,8 @@ move or delete events and reminders.  Voice and audio messages are
 transcribed using offline Vosk or online Whisper depending on
 configuration.
 
+Run via ``jarvis-bot`` or ``python -m jarvis.bot``.
+
 Before running the bot you must:
 
 * Create a Telegram bot via @BotFather and set ``TELEGRAM_TOKEN`` in your
@@ -44,9 +46,9 @@ from aiogram.types import (
 from aiogram.filters import Command, CommandObject
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-import store
-from llm_provider import LLM
-from stt import STT
+from . import store
+from .llm_provider import LLM
+from .stt import STT
 
 load_dotenv()
 
@@ -831,7 +833,10 @@ async def main() -> None:
     await dp.start_polling(bot)
 
 
-if __name__ == "__main__":
+def run() -> None:
     import asyncio
-
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

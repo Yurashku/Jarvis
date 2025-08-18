@@ -10,6 +10,7 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 TASKS_PATH = DATA_DIR / "tasks.json"
 EVENTS_PATH = DATA_DIR / "events.json"
+REMINDERS_PATH = DATA_DIR / "reminders.json"
 
 def _safe_load_json(path: Path) -> List[Dict]:
     # Пустой файл — это ок
@@ -24,9 +25,7 @@ def _safe_load_json(path: Path) -> List[Dict]:
         try:
             path.replace(backup)
         except Exception:
-            # Если не удалось переименовать — лишь логически продолжим
             pass
-        # Создаём новый пустой
         with path.open("w", encoding="utf-8") as f:
             f.write("[]")
         return []
@@ -37,8 +36,7 @@ def _atomic_save_json(path: Path, data: List[Dict]):
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())
-    # Замена атомарна на большинстве ФС Windows/NTFS
-    tmp.replace(path)
+    tmp.replace(path)  # атомарная замена на NTFS
 
 def _load(path: Path) -> List[Dict]:
     return _safe_load_json(path)
@@ -117,3 +115,112 @@ def list_events(owner: Optional[int] = None) -> List[Dict]:
     if owner is None:
         return events
     return [e for e in events if e.get("owner") == owner]
+
+def get_event_by_prefix(event_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    for e in events:
+        if e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            return e
+    return None
+
+def update_event_title(event_id_prefix: str, new_title: str, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    for e in events:
+        if e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            e["title"] = new_title
+            _save(EVENTS_PATH, events)
+            return e
+    return None
+
+def update_event_time(event_id_prefix: str, new_start_iso: str, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    for e in events:
+        if e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            e["start"] = new_start_iso
+            _save(EVENTS_PATH, events)
+            return e
+    return None
+
+def update_event_duration(event_id_prefix: str, new_duration_min: int, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    for e in events:
+        if e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            e["duration_min"] = int(new_duration_min)
+            _save(EVENTS_PATH, events)
+            return e
+    return None
+
+def snooze_event(event_id_prefix: str, minutes: int, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    for e in events:
+        if e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            base = datetime.fromisoformat(e["start"])
+            new_start = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+            e["start"] = new_start
+            _save(EVENTS_PATH, events)
+            return e
+    return None
+
+def delete_event(event_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict]:
+    events = _load(EVENTS_PATH)
+    deleted = None
+    left = []
+    for e in events:
+        if not deleted and e["id"].startswith(event_id_prefix) and (owner is None or e.get("owner") == owner):
+            deleted = e
+            continue
+        left.append(e)
+    if deleted is not None:
+        _save(EVENTS_PATH, left)
+    return deleted
+
+# ---------- Reminders ----------
+def add_reminder(text: str, at_iso: str, owner: Optional[int] = None) -> Dict:
+    reminders = _load(REMINDERS_PATH)
+    item = {
+        "id": str(uuid4()),
+        "text": text,
+        "at": at_iso,   # ISO 8601
+        "owner": owner,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    reminders.append(item)
+    _save(REMINDERS_PATH, reminders)
+    return item
+
+def list_reminders(owner: Optional[int] = None) -> List[Dict]:
+    reminders = _load(REMINDERS_PATH)
+    if owner is None:
+        return reminders
+    return [r for r in reminders if r.get("owner") == owner]
+
+def get_reminder_by_prefix(rem_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict]:
+    reminders = _load(REMINDERS_PATH)
+    for r in reminders:
+        if r["id"].startswith(rem_id_prefix) and (owner is None or r.get("owner") == owner):
+            return r
+    return None
+
+def snooze_reminder(rem_id_prefix: str, minutes: int, owner: Optional[int] = None) -> Optional[Dict]:
+    reminders = _load(REMINDERS_PATH)
+    for r in reminders:
+        if r["id"].startswith(rem_id_prefix) and (owner is None or r.get("owner") == owner):
+            base = datetime.fromisoformat(r["at"])
+            new_at = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+            r["at"] = new_at
+            _save(REMINDERS_PATH, reminders)
+            return r
+    return None
+
+def delete_reminder(rem_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict]:
+    reminders = _load(REMINDERS_PATH)
+    deleted = None
+    left = []
+    for r in reminders:
+        if not deleted and r["id"].startswith(rem_id_prefix) and (owner is None or r.get("owner") == owner):
+            deleted = r
+            continue
+        left.append(r)
+    if deleted is not None:
+        _save(REMINDERS_PATH, left)
+    return deleted

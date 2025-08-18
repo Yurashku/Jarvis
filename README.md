@@ -71,6 +71,14 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 * “Я уже выполнил задачу с курицей” – завершает подходящую задачу без указания ID.
 * В Telegram можно нажимать кнопки под задачами, событиями и напоминаниями, чтобы отметить выполненными, отложить или удалить.
 
+## Troubleshooting
+
+On startup Jarvis validates that required models and API keys are available. If something is misconfigured it will exit with a helpful message.
+
+* **`VOSK_MODEL_DIR missing`** – download a Vosk model (for example from https://alphacephei.com/vosk/models) and set `VOSK_MODEL_DIR` to its path, or switch STT to OpenAI by providing `OPENAI_API_KEY`.
+* **`OPENAI_API_KEY not set or unsupported region`** – obtain an API key from OpenAI and export it as `OPENAI_API_KEY`. If the service is not available in your region, use a VPN or switch to a local model.
+* **`Ollama model '<name>' missing`** – install Ollama and run `ollama pull <name>` to fetch the required model.
+
 ## Project structure
 
 * `cli.py` – интерактивный интерфейс для терминала с поддержкой LLM, команд и запланированных уведомлений.

@@ -50,6 +50,61 @@ from stt import STT
 
 load_dotenv()
 
+
+def _startup_checks() -> None:
+    """Validate environment before starting the bot."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        raise RuntimeError(
+            "TELEGRAM_TOKEN not set. Create a bot with @BotFather and export TELEGRAM_TOKEN."
+        )
+
+    llm_provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    if llm_provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY not set or unsupported region. Set the key or switch LLM_PROVIDER."
+            )
+    else:
+        model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+        try:
+            subprocess.run(
+                ["ollama", "show", model],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "ollama executable not found. Install it from https://ollama.com/download."
+            )
+        except subprocess.CalledProcessError:
+            raise RuntimeError(
+                f"Ollama model '{model}' missing. Run `ollama pull {model}`."
+            )
+
+    stt_provider = (os.getenv("STT_PROVIDER") or "auto").lower()
+    vosk_dir = os.getenv("VOSK_MODEL_DIR")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if stt_provider == "vosk":
+        if not vosk_dir or not Path(vosk_dir).exists():
+            raise RuntimeError(
+                "VOSK_MODEL_DIR missing. Download a Vosk model and set VOSK_MODEL_DIR."
+            )
+    elif stt_provider == "openai":
+        if not openai_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY not set or unsupported region. Obtain a key to use OpenAI Whisper."
+            )
+    else:  # auto
+        if not ((vosk_dir and Path(vosk_dir).exists()) or openai_key):
+            raise RuntimeError(
+                "No STT provider available. Set VOSK_MODEL_DIR or OPENAI_API_KEY."
+            )
+
+
+_startup_checks()
+
 # Initialize bots and scheduler
 bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 dp = Dispatcher()

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -49,10 +50,10 @@ class STT:
     def _pick_provider(self) -> str:
         if self.provider_setting in ("vosk", "openai"):
             return self.provider_setting
-        # auto mode: prefer Vosk if model dir exists, else OpenAI
+        # auto mode: prefer Vosk if model dir exists, else test OpenAI
         if self.vosk_model_dir and Path(self.vosk_model_dir).exists():
             return "vosk"
-        if self.openai_key:
+        if self.openai_key and self._ping_openai():
             return "openai"
         raise RuntimeError(
             "No speech-to-text provider available: set VOSK_MODEL_DIR or OPENAI_API_KEY"
@@ -111,12 +112,37 @@ class STT:
             ) from exc
         client = OpenAI(api_key=self.openai_key, base_url=self.openai_base_url)
         with open(audio_path, "rb") as f:
-            resp = client.audio.transcriptions.create(
-                model=self.openai_stt_model,
-                file=f,
-                language=lang,
-            )
+            try:
+                resp = client.audio.transcriptions.create(
+                    model=self.openai_stt_model,
+                    file=f,
+                    language=lang,
+                )
+            except Exception as exc:
+                status = getattr(exc, "status_code", None) or getattr(
+                    getattr(exc, "response", None), "status_code", None
+                )
+                if status == 403:
+                    raise RuntimeError(
+                        "OpenAI access forbidden (HTTP 403). "
+                        "Set VOSK_MODEL_DIR to use the offline Vosk engine."
+                    ) from exc
+                raise
         return getattr(resp, "text", "").strip()
+
+    def _ping_openai(self) -> bool:
+        """Return True if OpenAI API responds successfully."""
+        base = self.openai_base_url or "https://api.openai.com/v1"
+        url = base.rstrip("/") + "/models"
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {self.openai_key}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status < 400
+        except Exception:
+            return False
 
     def _ensure_wav_mono16k(self, src_path: str) -> str:
         """Ensure audio is a mono 16 kHz WAV.  Uses ffmpeg for conversion."""

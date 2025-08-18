@@ -37,7 +37,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 
 4. **Configure environment**:
 
-   * Copy `.env.example` to `.env` and fill in the values appropriate for your setup.  At a minimum you need to set `TELEGRAM_TOKEN` to run the bot.  If you plan to use OpenAI models, provide your `OPENAI_API_KEY`.  For offline speech recognition, download a Russian Vosk model and set `VOSK_MODEL_DIR`.  See comments in `.env.example` for details.
+   * Copy `.env.example` to `.env` and fill in the values appropriate for your setup.  At a minimum you need to set `TELEGRAM_TOKEN` to run the bot.  If you plan to use OpenAI models, provide your `OPENAI_API_KEY`.  For offline speech recognition, download a Russian Vosk model and set `VOSK_MODEL_DIR`; otherwise `STT_PROVIDER=auto` will fall back to OpenAI Whisper.  See comments in `.env.example` for details.
    * Install Ollama and fetch a model if using local LLMs.  For example:
 
      ```sh

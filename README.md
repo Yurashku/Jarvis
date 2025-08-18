@@ -12,7 +12,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 * **Reminders** – one‑off alerts at a specific time; snooze or delete them via inline buttons.
 * **Inline keyboards** – in Telegram you can mark tasks as done, snooze tasks/events/reminders (+10 min, +1 hour) or delete them with a tap.
 * **Speech to text** – send voice or audio messages and Jarvis will transcribe them using offline Vosk or online Whisper and process as normal commands.
-* **Local‑first** – tasks, events and reminders are stored in JSON files in the `data/` folder.  No data is sent anywhere unless you configure a cloud model for LLM/STT.
+* **Local‑first** – tasks, events and reminders are stored in a local SQLite database (`data/jarvis.db`).  No data is sent anywhere unless you configure a cloud model for LLM/STT.
 * **Flexible language models** – use a local model via [Ollama](https://ollama.com) by default or switch to OpenAI by changing environment variables.  The system prompt is defined in `bot.py`/`cli.py`.
 
 ## Installation
@@ -45,7 +45,13 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
      ollama pull llama3.1:8b
      ```
 
-5. **Run the command‑line interface** (optional):
+5. **Migrate existing JSON data** (optional):
+
+   ```sh
+   python migrate_to_sqlite.py
+   ```
+
+6. **Run the command‑line interface** (optional):
 
    ```sh
    python cli.py
@@ -53,7 +59,7 @@ Jarvis is a personal assistant designed to help you manage your tasks, events an
 
    Jarvis will greet you and you can start typing commands or natural language.  Type `/exit` to quit.
 
-6. **Run the Telegram bot**:
+7. **Run the Telegram bot**:
 
    ```sh
    python bot.py
@@ -83,10 +89,10 @@ On startup Jarvis validates that required models and API keys are available. If 
 
 * `cli.py` – интерактивный интерфейс для терминала с поддержкой LLM, команд и запланированных уведомлений.
 * `bot.py` – реализация Telegram‑бота на aiogram.  Содержит хендлеры команд, обработку естественного языка, inline‑кнопки и планировщик.
-* `store.py` – модуль для хранения задач, событий и напоминаний.  Использует JSON‑файлы и поддерживает многопользовательский режим (поле `owner`).
+* `store.py` – модуль для хранения задач, событий и напоминаний.  Использует SQLite с полнотекстовым поиском и поддерживает многопользовательский режим (поле `owner`).
 * `llm_provider.py` – абстракция над языковыми моделями.  Выбирает Ollama или OpenAI в зависимости от переменных окружения и предоставляет методы `ask` и `ask_json`.
 * `stt.py` – модуль для распознавания речи.  Работает через офлайн Vosk или онлайн OpenAI Whisper.  Требуется ffmpeg для конвертации аудио.
-* `data/` – папка для сохранения JSON‑файлов с вашими данными.  Создаётся автоматически.
+* `data/` – папка для сохранения базы данных (`jarvis.db`) с вашими данными.  Создаётся автоматически.
 
 ## Contributing
 

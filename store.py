@@ -2,175 +2,116 @@
 store.py
 ~~~~~~~~
 
-This module provides a simple persistence layer backed by JSON files.  It
-supports tasks, events and one-off reminders, along with helper
-functions for completing, snoozing and editing entries.  Each record
-includes an optional ``owner`` field to support multi-user scenarios (the
-owner being the Telegram chat ID).  Files are written atomically and
-loaded defensively to avoid data corruption.
+Persistence layer backed by SQLite.
 
-The functions in this module are intentionally minimal and
-synchronous; concurrency concerns are handled at a higher level.
-
-Data model summary:
-
-* Task: {id, text, due, done, owner, created_at}
-* Event: {id, title, start, duration_min, owner, created_at}
-* Reminder: {id, text, at, owner, created_at}
-
-If ``owner`` is ``None``, the record is considered global (used by CLI).
-
+This module mirrors the public API of the previous JSON-based store but
+uses a SQLite database located in ``data/jarvis.db``.  It exposes helper
+functions for tasks, events and reminders as well as a simple full-text
+search facility.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from uuid import uuid4
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-TASKS_PATH = DATA_DIR / "tasks.json"
-EVENTS_PATH = DATA_DIR / "events.json"
-REMINDERS_PATH = DATA_DIR / "reminders.json"
+from db import get_conn
 
 
-def _safe_load_json(path: Path) -> List[Dict[str, object]]:
-    """Load JSON from a file, returning an empty list on missing/empty files."""
-    if not path.exists() or path.stat().st_size == 0:
-        return []
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        # Backup corrupt file and start fresh
-        backup = path.with_suffix(path.suffix + f".corrupt-{int(time.time())}.bak")
-        try:
-            path.replace(backup)
-        except Exception:
-            # If we can't rename, ignore
-            pass
-        with path.open("w", encoding="utf-8") as f:
-            f.write("[]")
-        return []
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
 
 
-def _atomic_save_json(path: Path, data: List[Dict[str, object]]) -> None:
-    """Write JSON to a file atomically to avoid partial writes."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.replace(path)
-
-
-def _load(path: Path) -> List[Dict[str, object]]:
-    return _safe_load_json(path)
-
-
-def _save(path: Path, data: List[Dict[str, object]]) -> None:
-    _atomic_save_json(path, data)
-
-
+def _task_from_row(row) -> Dict[str, object]:
+    d = dict(row)
+    d["done"] = bool(d["done"])
+    return d
 # -----------------------------------------------------------------------------
 # Tasks
 # -----------------------------------------------------------------------------
+
 
 def add_task(
     text: str,
     due_iso: Optional[str] = None,
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
-    """Create a new task.
-
-    :param text: description of the task
-    :param due_iso: ISO datetime string when the task should be completed
-    :param owner: optional user identifier; used by Telegram bot
-    """
-    tasks = _load(TASKS_PATH)
-    item = {
-        "id": str(uuid4()),
+    task_id = str(uuid4())
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO tasks (id, text, due, done, owner, created_at) VALUES (?,?,?,?,?,?)",
+            (task_id, text, due_iso, 0, owner, created_at),
+        )
+        conn.execute(
+            "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
+            (task_id, "task", text, owner),
+        )
+    return {
+        "id": task_id,
         "text": text,
         "due": due_iso,
         "done": False,
         "owner": owner,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "created_at": created_at,
     }
-    tasks.append(item)
-    _save(TASKS_PATH, tasks)
-    return item
 
 
 def list_tasks(owner: Optional[int] = None) -> List[Dict[str, object]]:
-    """Return all tasks for the specified owner (or all if owner is None)."""
-    tasks = _load(TASKS_PATH)
-    if owner is None:
-        return tasks
-    return [t for t in tasks if t.get("owner") == owner]
+    sql = "SELECT * FROM tasks"
+    params: List[object] = []
+    if owner is not None:
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_task_from_row(r) for r in rows]
+
+
+def get_task_by_prefix(
+    task_id_prefix: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    sql = "SELECT * FROM tasks WHERE id LIKE ? || '%'"
+    params: List[object] = [task_id_prefix]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return _task_from_row(row) if row else None
 
 
 def complete_task(task_id_prefix: str, owner: Optional[int] = None) -> bool:
-    """Mark a task as done using a prefix of its UUID.
-
-    Returns True if a task was found and updated; False otherwise.
-    """
-    tasks = _load(TASKS_PATH)
-    updated = False
-    for t in tasks:
-        if t["id"].startswith(task_id_prefix) and (
-            owner is None or t.get("owner") == owner
-        ):
-            t["done"] = True
-            updated = True
-            break
-    if updated:
-        _save(TASKS_PATH, tasks)
-    return updated
-
-
-def get_task_by_prefix(task_id_prefix: str, owner: Optional[int] = None) -> Optional[Dict[str, object]]:
-    """Find a task by ID prefix."""
-    tasks = _load(TASKS_PATH)
-    for t in tasks:
-        if t["id"].startswith(task_id_prefix) and (
-            owner is None or t.get("owner") == owner
-        ):
-            return t
-    return None
+    task = get_task_by_prefix(task_id_prefix, owner)
+    if not task:
+        return False
+    with get_conn() as conn:
+        conn.execute("UPDATE tasks SET done = 1 WHERE id = ?", (task["id"],))
+    return True
 
 
 def snooze_task(
     task_id_prefix: str, minutes: int, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Delay a task's deadline by a number of minutes."""
-    tasks = _load(TASKS_PATH)
-    for t in tasks:
-        if t["id"].startswith(task_id_prefix) and (
-            owner is None or t.get("owner") == owner
-        ):
-            base = (
-                datetime.fromisoformat(t["due"])
-                if t.get("due")
-                else datetime.now()
-            )
-            new_due = (
-                base + timedelta(minutes=minutes)
-            ).replace(microsecond=0).isoformat()
-            t["due"] = new_due
-            _save(TASKS_PATH, tasks)
-            return t
-    return None
+    task = get_task_by_prefix(task_id_prefix, owner)
+    if not task:
+        return None
+    base = (
+        datetime.fromisoformat(task["due"]) if task.get("due") else datetime.now()
+    )
+    new_due = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    with get_conn() as conn:
+        conn.execute("UPDATE tasks SET due = ? WHERE id = ?", (new_due, task["id"]))
+    task["due"] = new_due
+    return task
 
 
 # -----------------------------------------------------------------------------
 # Events
 # -----------------------------------------------------------------------------
+
 
 def add_event(
     title: str,
@@ -178,202 +119,222 @@ def add_event(
     duration_min: int = 60,
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
-    """Create a new event."""
-    events = _load(EVENTS_PATH)
-    item = {
-        "id": str(uuid4()),
+    event_id = str(uuid4())
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO events (id, title, start, duration_min, owner, created_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (event_id, title, start_iso, int(duration_min), owner, created_at),
+        )
+        conn.execute(
+            "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
+            (event_id, "event", title, owner),
+        )
+    return {
+        "id": event_id,
         "title": title,
         "start": start_iso,
         "duration_min": int(duration_min),
         "owner": owner,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "created_at": created_at,
     }
-    events.append(item)
-    _save(EVENTS_PATH, events)
-    return item
 
 
 def list_events(owner: Optional[int] = None) -> List[Dict[str, object]]:
-    """Return all events for a given owner."""
-    events = _load(EVENTS_PATH)
-    if owner is None:
-        return events
-    return [e for e in events if e.get("owner") == owner]
+    sql = "SELECT * FROM events"
+    params: List[object] = []
+    if owner is not None:
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_event_by_prefix(
     event_id_prefix: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Find an event by ID prefix."""
-    events = _load(EVENTS_PATH)
-    for e in events:
-        if e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            return e
-    return None
+    sql = "SELECT * FROM events WHERE id LIKE ? || '%'"
+    params: List[object] = [event_id_prefix]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return dict(row) if row else None
 
 
 def update_event_title(
     event_id_prefix: str, new_title: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Rename an event."""
-    events = _load(EVENTS_PATH)
-    for e in events:
-        if e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            e["title"] = new_title
-            _save(EVENTS_PATH, events)
-            return e
-    return None
+    event = get_event_by_prefix(event_id_prefix, owner)
+    if not event:
+        return None
+    with get_conn() as conn:
+        conn.execute("UPDATE events SET title = ? WHERE id = ?", (new_title, event["id"]))
+        conn.execute(
+            "UPDATE search_index SET content = ? WHERE id = ? AND type = 'event'",
+            (new_title, event["id"]),
+        )
+    event["title"] = new_title
+    return event
 
 
 def update_event_time(
     event_id_prefix: str, new_start_iso: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Move an event to a new start time."""
-    events = _load(EVENTS_PATH)
-    for e in events:
-        if e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            e["start"] = new_start_iso
-            _save(EVENTS_PATH, events)
-            return e
-    return None
+    event = get_event_by_prefix(event_id_prefix, owner)
+    if not event:
+        return None
+    with get_conn() as conn:
+        conn.execute("UPDATE events SET start = ? WHERE id = ?", (new_start_iso, event["id"]))
+    event["start"] = new_start_iso
+    return event
 
 
 def update_event_duration(
     event_id_prefix: str, new_duration_min: int, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Change the duration of an event."""
-    events = _load(EVENTS_PATH)
-    for e in events:
-        if e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            e["duration_min"] = int(new_duration_min)
-            _save(EVENTS_PATH, events)
-            return e
-    return None
+    event = get_event_by_prefix(event_id_prefix, owner)
+    if not event:
+        return None
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE events SET duration_min = ? WHERE id = ?",
+            (int(new_duration_min), event["id"]),
+        )
+    event["duration_min"] = int(new_duration_min)
+    return event
 
 
 def snooze_event(
     event_id_prefix: str, minutes: int, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Delay an event's start time by a number of minutes."""
-    events = _load(EVENTS_PATH)
-    for e in events:
-        if e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            base = datetime.fromisoformat(e["start"])
-            new_start = (
-                base + timedelta(minutes=minutes)
-            ).replace(microsecond=0).isoformat()
-            e["start"] = new_start
-            _save(EVENTS_PATH, events)
-            return e
-    return None
+    event = get_event_by_prefix(event_id_prefix, owner)
+    if not event:
+        return None
+    base = datetime.fromisoformat(event["start"])
+    new_start = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    with get_conn() as conn:
+        conn.execute("UPDATE events SET start = ? WHERE id = ?", (new_start, event["id"]))
+    event["start"] = new_start
+    return event
 
 
 def delete_event(
     event_id_prefix: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Remove an event from the store and return it."""
-    events = _load(EVENTS_PATH)
-    removed: Optional[Dict[str, object]] = None
-    remaining: List[Dict[str, object]] = []
-    for e in events:
-        if removed is None and e["id"].startswith(event_id_prefix) and (
-            owner is None or e.get("owner") == owner
-        ):
-            removed = e
-            continue
-        remaining.append(e)
-    if removed is not None:
-        _save(EVENTS_PATH, remaining)
-    return removed
+    event = get_event_by_prefix(event_id_prefix, owner)
+    if not event:
+        return None
+    with get_conn() as conn:
+        conn.execute("DELETE FROM events WHERE id = ?", (event["id"],))
+        conn.execute(
+            "DELETE FROM search_index WHERE id = ? AND type = 'event'",
+            (event["id"],),
+        )
+    return event
 
 
 # -----------------------------------------------------------------------------
 # Reminders
 # -----------------------------------------------------------------------------
 
+
 def add_reminder(
     text: str,
     at_iso: str,
     owner: Optional[int] = None,
 ) -> Dict[str, object]:
-    """Create a one-off reminder."""
-    reminders = _load(REMINDERS_PATH)
-    item = {
-        "id": str(uuid4()),
+    rem_id = str(uuid4())
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO reminders (id, text, at, owner, created_at) VALUES (?,?,?,?,?)",
+            (rem_id, text, at_iso, owner, created_at),
+        )
+        conn.execute(
+            "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
+            (rem_id, "reminder", text, owner),
+        )
+    return {
+        "id": rem_id,
         "text": text,
         "at": at_iso,
         "owner": owner,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "created_at": created_at,
     }
-    reminders.append(item)
-    _save(REMINDERS_PATH, reminders)
-    return item
 
 
 def list_reminders(owner: Optional[int] = None) -> List[Dict[str, object]]:
-    """Return all reminders for a given owner."""
-    reminders = _load(REMINDERS_PATH)
-    if owner is None:
-        return reminders
-    return [r for r in reminders if r.get("owner") == owner]
+    sql = "SELECT * FROM reminders"
+    params: List[object] = []
+    if owner is not None:
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_reminder_by_prefix(
     rem_id_prefix: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Find a reminder by ID prefix."""
-    reminders = _load(REMINDERS_PATH)
-    for r in reminders:
-        if r["id"].startswith(rem_id_prefix) and (
-            owner is None or r.get("owner") == owner
-        ):
-            return r
-    return None
+    sql = "SELECT * FROM reminders WHERE id LIKE ? || '%'"
+    params: List[object] = [rem_id_prefix]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return dict(row) if row else None
 
 
 def snooze_reminder(
     rem_id_prefix: str, minutes: int, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Delay a reminder by a number of minutes."""
-    reminders = _load(REMINDERS_PATH)
-    for r in reminders:
-        if r["id"].startswith(rem_id_prefix) and (
-            owner is None or r.get("owner") == owner
-        ):
-            base = datetime.fromisoformat(r["at"])
-            new_at = (
-                base + timedelta(minutes=minutes)
-            ).replace(microsecond=0).isoformat()
-            r["at"] = new_at
-            _save(REMINDERS_PATH, reminders)
-            return r
-    return None
+    rem = get_reminder_by_prefix(rem_id_prefix, owner)
+    if not rem:
+        return None
+    base = datetime.fromisoformat(rem["at"])
+    new_at = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    with get_conn() as conn:
+        conn.execute("UPDATE reminders SET at = ? WHERE id = ?", (new_at, rem["id"]))
+    rem["at"] = new_at
+    return rem
 
 
 def delete_reminder(
     rem_id_prefix: str, owner: Optional[int] = None
 ) -> Optional[Dict[str, object]]:
-    """Remove a reminder from the store and return it."""
-    reminders = _load(REMINDERS_PATH)
-    removed: Optional[Dict[str, object]] = None
-    remaining: List[Dict[str, object]] = []
-    for r in reminders:
-        if removed is None and r["id"].startswith(rem_id_prefix) and (
-            owner is None or r.get("owner") == owner
-        ):
-            removed = r
-            continue
-        remaining.append(r)
-    if removed is not None:
-        _save(REMINDERS_PATH, remaining)
-    return removed
+    rem = get_reminder_by_prefix(rem_id_prefix, owner)
+    if not rem:
+        return None
+    with get_conn() as conn:
+        conn.execute("DELETE FROM reminders WHERE id = ?", (rem["id"],))
+        conn.execute(
+            "DELETE FROM search_index WHERE id = ? AND type = 'reminder'",
+            (rem["id"],),
+        )
+    return rem
+
+
+# -----------------------------------------------------------------------------
+# Search
+# -----------------------------------------------------------------------------
+
+
+def search_entries(query: str, owner: Optional[int] = None) -> List[Dict[str, object]]:
+    """Search tasks, events and reminders using FTS5."""
+    sql = "SELECT id, type, content, owner FROM search_index WHERE search_index MATCH ?"
+    params: List[object] = [query]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+

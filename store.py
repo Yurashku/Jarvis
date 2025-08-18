@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import uuid4
 
+from dateutil.rrule import rrulestr
 from db import get_conn
 
 
@@ -237,6 +238,246 @@ def delete_event(
             (event["id"],),
         )
     return event
+
+
+# -----------------------------------------------------------------------------
+# Recurring events
+# -----------------------------------------------------------------------------
+
+
+def _recurring_event_from_row(row) -> Dict[str, object]:
+    return dict(row)
+
+
+def add_recurring_event(
+    title: str,
+    rrule_str: str,
+    duration_min: int = 60,
+    owner: Optional[int] = None,
+) -> Dict[str, object]:
+    rec_id = str(uuid4())
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO recurring_events (id, title, rrule, duration_min, owner, created_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (rec_id, title, rrule_str, int(duration_min), owner, created_at),
+        )
+        conn.execute(
+            "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
+            (rec_id, "event", title, owner),
+        )
+    return {
+        "id": rec_id,
+        "title": title,
+        "rrule": rrule_str,
+        "duration_min": int(duration_min),
+        "owner": owner,
+        "created_at": created_at,
+    }
+
+
+def list_recurring_events(owner: Optional[int] = None) -> List[Dict[str, object]]:
+    sql = "SELECT * FROM recurring_events"
+    params: List[object] = []
+    if owner is not None:
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_recurring_event_from_row(r) for r in rows]
+
+
+def get_recurring_event_by_prefix(
+    rec_id_prefix: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    sql = "SELECT * FROM recurring_events WHERE id LIKE ? || '%'"
+    params: List[object] = [rec_id_prefix]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return _recurring_event_from_row(row) if row else None
+
+
+def update_recurring_event_title(
+    rec_id_prefix: str, new_title: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    rec = get_recurring_event_by_prefix(rec_id_prefix, owner)
+    if not rec:
+        return None
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE recurring_events SET title = ? WHERE id = ?",
+            (new_title, rec["id"]),
+        )
+        conn.execute(
+            "UPDATE search_index SET content = ? WHERE id = ? AND type = 'event'",
+            (new_title, rec["id"]),
+        )
+    rec["title"] = new_title
+    return rec
+
+
+def update_recurring_event_rule(
+    rec_id_prefix: str, new_rrule: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    rec = get_recurring_event_by_prefix(rec_id_prefix, owner)
+    if not rec:
+        return None
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE recurring_events SET rrule = ? WHERE id = ?",
+            (new_rrule, rec["id"]),
+        )
+    rec["rrule"] = new_rrule
+    return rec
+
+
+def delete_recurring_event(
+    rec_id_prefix: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    rec = get_recurring_event_by_prefix(rec_id_prefix, owner)
+    if not rec:
+        return None
+    with get_conn() as conn:
+        conn.execute("DELETE FROM recurring_events WHERE id = ?", (rec["id"],))
+        conn.execute(
+            "DELETE FROM search_index WHERE id = ? AND type = 'event'",
+            (rec["id"],),
+        )
+    return rec
+
+
+def list_events_on(
+    day: str, owner: Optional[int] = None
+) -> List[Dict[str, object]]:
+    start = datetime.fromisoformat(day + "T00:00:00")
+    end = start + timedelta(days=1)
+    events = [
+        e
+        for e in list_events(owner)
+        if e.get("start", "").startswith(day)
+    ]
+    for rec in list_recurring_events(owner):
+        rule = rrulestr(rec["rrule"])
+        for dt in rule.between(start, end, inc=False):
+            events.append(
+                {
+                    "id": rec["id"],
+                    "title": rec["title"],
+                    "start": dt.isoformat(),
+                    "duration_min": rec["duration_min"],
+                    "owner": rec["owner"],
+                    "created_at": rec["created_at"],
+                    "recurring": True,
+                }
+            )
+    events.sort(key=lambda e: e["start"])
+    return events
+
+
+# -----------------------------------------------------------------------------
+# Reminders
+# -----------------------------------------------------------------------------
+
+
+def add_reminder(
+    text: str,
+    at_iso: str,
+    owner: Optional[int] = None,
+) -> Dict[str, object]:
+    rem_id = str(uuid4())
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO reminders (id, text, at, owner, created_at) VALUES (?,?,?,?,?)",
+            (rem_id, text, at_iso, owner, created_at),
+        )
+        conn.execute(
+            "INSERT INTO search_index (id, type, content, owner) VALUES (?,?,?,?)",
+            (rem_id, "reminder", text, owner),
+        )
+    return {
+        "id": rem_id,
+        "text": text,
+        "at": at_iso,
+        "owner": owner,
+        "created_at": created_at,
+    }
+
+
+def list_reminders(owner: Optional[int] = None) -> List[Dict[str, object]]:
+    sql = "SELECT * FROM reminders"
+    params: List[object] = []
+    if owner is not None:
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_reminder_by_prefix(
+    rem_id_prefix: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    sql = "SELECT * FROM reminders WHERE id LIKE ? || '%'"
+    params: List[object] = [rem_id_prefix]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return dict(row) if row else None
+
+
+def snooze_reminder(
+    rem_id_prefix: str, minutes: int, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    rem = get_reminder_by_prefix(rem_id_prefix, owner)
+    if not rem:
+        return None
+    base = datetime.fromisoformat(rem["at"])
+    new_at = (base + timedelta(minutes=minutes)).replace(microsecond=0).isoformat()
+    with get_conn() as conn:
+        conn.execute("UPDATE reminders SET at = ? WHERE id = ?", (new_at, rem["id"]))
+    rem["at"] = new_at
+    return rem
+
+
+def delete_reminder(
+    rem_id_prefix: str, owner: Optional[int] = None
+) -> Optional[Dict[str, object]]:
+    rem = get_reminder_by_prefix(rem_id_prefix, owner)
+    if not rem:
+        return None
+    with get_conn() as conn:
+        conn.execute("DELETE FROM reminders WHERE id = ?", (rem["id"],))
+        conn.execute(
+            "DELETE FROM search_index WHERE id = ? AND type = 'reminder'",
+            (rem["id"],),
+        )
+    return rem
+
+
+# -----------------------------------------------------------------------------
+# Search
+# -----------------------------------------------------------------------------
+
+
+def search_entries(query: str, owner: Optional[int] = None) -> List[Dict[str, object]]:
+    """Search tasks, events and reminders using FTS5."""
+    sql = "SELECT id, type, content, owner FROM search_index WHERE search_index MATCH ?"
+    params: List[object] = [query]
+    if owner is not None:
+        sql += " AND owner = ?"
+        params.append(owner)
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
 
 # -----------------------------------------------------------------------------

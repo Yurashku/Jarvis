@@ -47,6 +47,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import store
 from llm_provider import LLM
 from stt import STT
+from dateutil import rrule
 
 load_dotenv()
 
@@ -287,6 +288,28 @@ def schedule_event_if_due(ev: dict) -> None:
     )
 
 
+def schedule_recurring_event_if_due(ev: dict) -> None:
+    rrule_str = ev.get("rrule")
+    owner = ev.get("owner")
+    if not rrule_str or not owner:
+        return
+    try:
+        rule = rrule.rrulestr(rrule_str)
+        next_dt = rule.after(datetime.now(), inc=True)
+    except Exception:
+        return
+    if not next_dt or next_dt <= datetime.now():
+        return
+    scheduler.add_job(
+        send_event_reminder,
+        "date",
+        run_date=next_dt,
+        id=f"revent:{ev['id']}",
+        replace_existing=True,
+        args=[owner, ev["title"], next_dt.isoformat(), ev["id"][:8]],
+    )
+
+
 def schedule_reminder_if_due(rem: dict) -> None:
     at = rem.get("at")
     owner = rem.get("owner")
@@ -314,6 +337,8 @@ def rehydrate_all_jobs() -> None:
         schedule_task_if_due(t)
     for e in store.list_events():
         schedule_event_if_due(e)
+    for r in store.list_recurring_events():
+        schedule_recurring_event_if_due(r)
     for r in store.list_reminders():
         schedule_reminder_if_due(r)
 
@@ -339,6 +364,8 @@ HELP_TEXT = (
     "/event_move ID_PREFIX YYYY-MM-DDTHH:MM\n"
     "/event_duration ID_PREFIX МИНУТЫ\n"
     "/event_delete ID_PREFIX\n"
+    "/event_repeat \"Название\" каждый ПОНЕДЕЛЬНИК в HH[:MM] ДЛИТ_МИН\n"
+    "/event_repeat_delete ID_PREFIX\n"
     "/remind \"Текст\" YYYY-MM-DDTHH:MM\n"
     "/reminders\n"
     "/rem_del ID_PREFIX\n"
@@ -465,6 +492,65 @@ async def cmd_event_delete(message: Message, command: CommandObject) -> None:
     await message.answer(f"🗑 Удалено: [{ev['id'][:8]}] {ev['title']}")
 
 
+@dp.message(Command("event_repeat"))
+async def cmd_event_repeat(message: Message, command: CommandObject) -> None:
+    args = command.args or ""
+    pattern = (
+        r'"(.+?)"\s+каждый\s+'
+        r'(понедельник|вторник|среду|среда|четверг|пятницу|субботу|суббота|воскресенье)\s+'
+        r'в\s+(\d{1,2})(?::(\d{2}))?\s+(\d+)'
+    )
+    m = re.match(pattern, args.lower())
+    if not m:
+        await message.answer('Формат: /event_repeat "Название" каждый ПОНЕДЕЛЬНИК в HH[:MM] ДЛИТ_МИН')
+        return
+    title = m.group(1)
+    day = m.group(2)
+    hour = int(m.group(3))
+    minute = int(m.group(4) or 0)
+    duration = int(m.group(5))
+    weekday_map = {
+        "понедельник": rrule.MO,
+        "вторник": rrule.TU,
+        "среду": rrule.WE,
+        "среда": rrule.WE,
+        "четверг": rrule.TH,
+        "пятницу": rrule.FR,
+        "субботу": rrule.SA,
+        "суббота": rrule.SA,
+        "воскресенье": rrule.SU,
+    }
+    weekday = weekday_map[day]
+    now = datetime.now().replace(second=0, microsecond=0)
+    dt = now.replace(hour=hour, minute=minute)
+    while dt.weekday() != weekday.weekday or dt <= now:
+        dt += timedelta(days=1)
+    rule = rrule.rrule(rrule.WEEKLY, dtstart=dt, byweekday=weekday)
+    rrule_str = str(rule)
+    ev = store.add_recurring_event(title, rrule_str, duration, owner=message.chat.id)
+    schedule_recurring_event_if_due(ev)
+    await message.answer(
+        f"✅ Добавил повторяющееся событие [{ev['id'][:8]}] {title} — {day} в {hour:02d}:{minute:02d}"
+    )
+
+
+@dp.message(Command("event_repeat_delete"))
+async def cmd_event_repeat_delete(message: Message, command: CommandObject) -> None:
+    id8 = (command.args or "").strip()
+    if not id8:
+        await message.answer('Формат: /event_repeat_delete ID_PREFIX')
+        return
+    ev = store.delete_recurring_event(id8, owner=message.chat.id)
+    if not ev:
+        await message.answer("Серия не найдена ❌")
+        return
+    try:
+        scheduler.remove_job(f"revent:{ev['id']}")
+    except Exception:
+        pass
+    await message.answer(f"🗑 Серия удалена: [{ev['id'][:8]}] {ev['title']}")
+
+
 @dp.message(Command("agenda"))
 async def cmd_agenda(message: Message, command: CommandObject) -> None:
     arg = (command.args or "").strip().lower() or "today"
@@ -474,14 +560,16 @@ async def cmd_agenda(message: Message, command: CommandObject) -> None:
         date_str = (datetime.now() + timedelta(days=1)).date().isoformat()
     else:
         date_str = arg
-    events = [e for e in store.list_events(owner=message.chat.id) if e["start"].startswith(date_str)]
+    events = store.list_events_on(date_str, owner=message.chat.id)
     if not events:
         await message.answer(f"Событий на {date_str} нет.")
         return
     for e in events:
+        prefix = "🔁" if e.get("recurring") else "📅"
+        kb = None if e.get("recurring") else event_keyboard(e['id'][:8])
         await message.answer(
-            f"📅 [{e['id'][:8]}] {e['title']} — { _human(e['start']) } ({e['duration_min']} мин)",
-            reply_markup=event_keyboard(e['id'][:8]),
+            f"{prefix} [{e['id'][:8]}] {e['title']} — { _human(e['start']) } ({e['duration_min']} мин)",
+            reply_markup=kb,
         )
 
 

@@ -20,3 +20,6 @@ vosk>=0.3.45           # Offline speech recognition engine (optional)
 # Additional libraries
 pytz>=2023.3           # Timezone handling (if needed)
 dateparser>=1.2.0      # Parsing natural language dates (optional, used by models)
+# Testing and linting
+pytest>=7.4.0
+flake8>=6.0.0

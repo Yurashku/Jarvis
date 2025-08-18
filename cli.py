@@ -32,10 +32,41 @@ from rich.prompt import Prompt
 
 import store
 from llm_provider import LLM
+import subprocess
 
 
 # Load environment variables from .env for local development
 load_dotenv()
+
+
+def _startup_checks() -> None:
+    """Validate environment before starting the CLI."""
+    provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    if provider == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY not set or unsupported region. Set the key or switch LLM_PROVIDER."
+            )
+    else:
+        model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+        try:
+            subprocess.run(
+                ["ollama", "show", model],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "ollama executable not found. Install it from https://ollama.com/download."
+            )
+        except subprocess.CalledProcessError:
+            raise RuntimeError(
+                f"Ollama model '{model}' missing. Run `ollama pull {model}`."
+            )
+
+
+_startup_checks()
 
 console = Console()
 llm = LLM()

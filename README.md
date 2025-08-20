@@ -94,6 +94,10 @@ On startup Jarvis validates that required models and API keys are available. If 
 * `stt.py` – модуль для распознавания речи.  Работает через офлайн Vosk или онлайн OpenAI Whisper.  Требуется ffmpeg для конвертации аудио.
 * `data/` – папка для сохранения базы данных (`jarvis.db`) с вашими данными.  Создаётся автоматически.
 
+## Дополнительные материалы
+
+* [Туториал по propensity и value моделям](docs/propensity_tutorial.md)
+
 ## Contributing
 
 Пожалуйста, открывайте issues и pull‑requests для предложений улучшений.  Ветки должны проходить тесты (CLI запускается без ошибок) и обновлять документацию при добавлении новых возможностей.

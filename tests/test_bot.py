@@ -3,6 +3,7 @@ from pathlib import Path
 import importlib
 import pytest
 import store
+import db
 
 
 class DummyMessage:
@@ -17,8 +18,13 @@ class DummyMessage:
 
 
 @pytest.fixture
-def bot_module(monkeypatch):
+def bot_module(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_TOKEN", "123:ABC")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "jarvis.db")
+    db.init_db()
+    importlib.reload(store)
     import bot
     importlib.reload(bot)
     return bot

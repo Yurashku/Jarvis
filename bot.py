@@ -454,7 +454,7 @@ async def cmd_event_move(message: Message, command: CommandObject) -> None:
         pass
     schedule_event_if_due(ev)
     await message.answer(
-        f"⏱ Перенос: [{ev['id'][:8]}] {ev['title']} → { _human(ev['start']) }"
+        f"⏱ Перенос: [{ev['id'][:8]}] {ev['title']} → {_human(ev['start'])}"
     )
 
 
@@ -568,7 +568,7 @@ async def cmd_agenda(message: Message, command: CommandObject) -> None:
         prefix = "🔁" if e.get("recurring") else "📅"
         kb = None if e.get("recurring") else event_keyboard(e['id'][:8])
         await message.answer(
-            f"{prefix} [{e['id'][:8]}] {e['title']} — { _human(e['start']) } ({e['duration_min']} мин)",
+            f"{prefix} [{e['id'][:8]}] {e['title']} — {_human(e['start'])} ({e['duration_min']} мин)",
             reply_markup=kb,
         )
 
@@ -613,7 +613,7 @@ async def cmd_remind(message: Message, command: CommandObject) -> None:
     r = store.add_reminder(m.group(1), m.group(2), owner=message.chat.id)
     schedule_reminder_if_due(r)
     await message.answer(
-        f"🔔 Напоминание: [{r['id'][:8]}] {r['text']} — { _human(r['at']) }",
+        f"🔔 Напоминание: [{r['id'][:8]}] {r['text']} — {_human(r['at'])}",
         reply_markup=reminder_keyboard(r['id'][:8]),
     )
 
@@ -626,7 +626,7 @@ async def cmd_reminders(message: Message) -> None:
         return
     for r in rems:
         await message.answer(
-            f"🔔 [{r['id'][:8]}] {r['text']} — { _human(r['at']) }",
+            f"🔔 [{r['id'][:8]}] {r['text']} — {_human(r['at'])}",
             reply_markup=reminder_keyboard(r['id'][:8]),
         )
 

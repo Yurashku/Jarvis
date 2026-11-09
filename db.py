@@ -78,4 +78,3 @@ def init_db() -> None:
 
 # Ensure tables exist when the module is imported
 init_db()
-

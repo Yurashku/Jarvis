@@ -20,7 +20,6 @@ from __future__ import annotations
 import os
 import re
 import sys
-import threading
 from datetime import datetime, timedelta
 from string import Template
 from typing import Optional
@@ -132,6 +131,7 @@ def schedule_console_notification(message: str, run_at_iso: str) -> None:
         return
     if dt <= datetime.now():
         return
+
     def notify() -> None:
         console.print(f"[bold yellow]Напоминание:[/bold yellow] {message}")
     scheduler.add_job(notify, "date", run_date=dt)
@@ -226,7 +226,8 @@ def slash_command(text: str) -> bool:
         item = store.add_task(m.group(1), m.group(2), owner=None)
         schedule_console_notification(f"Задача: {item['text']}", item["due"])
         console.print(
-            f"[green]Добавил:[/green] [{item['id'][:8]}] {item['text']}{' — ' + _human(item['due']) if item['due'] else ''}"
+            f"[green]Добавил:[/green] [{item['id'][:8]}] {item['text']}"
+            f"{' — ' + _human(item['due']) if item['due'] else ''}"
         )
         return True
 
@@ -239,7 +240,7 @@ def slash_command(text: str) -> bool:
         ev = store.add_event(m.group(1), m.group(2), int(m.group(3)), owner=None)
         schedule_console_notification(f"Событие: {ev['title']}", ev["start"])
         console.print(
-            f"[blue]Событие:[/blue] [{ev['id'][:8]}] {ev['title']} — { _human(ev['start']) } ({ev['duration_min']} мин)"
+            f"[blue]Событие:[/blue] [{ev['id'][:8]}] {ev['title']} — {_human(ev['start'])} ({ev['duration_min']} мин)"
         )
         return True
 
@@ -290,7 +291,7 @@ def slash_command(text: str) -> bool:
         else:
             # schedule new notification
             schedule_console_notification(f"Событие: {ev['title']}", ev['start'])
-            console.print(f"[blue]Перенесено:[/blue] [{ev['id'][:8]}] {ev['title']} → { _human(ev['start']) }")
+            console.print(f"[blue]Перенесено:[/blue] [{ev['id'][:8]}] {ev['title']} → {_human(ev['start'])}")
         return True
 
     # /event_duration ID_PREFIX MINUTES
@@ -337,7 +338,7 @@ def slash_command(text: str) -> bool:
         else:
             for e in events:
                 console.print(
-                    f"📅 [{e['id'][:8]}] {e['title']} — { _human(e['start']) } ({e['duration_min']} мин)"
+                    f"📅 [{e['id'][:8]}] {e['title']} — {_human(e['start'])} ({e['duration_min']} мин)"
                 )
         return True
 
@@ -350,7 +351,7 @@ def slash_command(text: str) -> bool:
         r = store.add_reminder(m.group(1), m.group(2), owner=None)
         schedule_console_notification(f"Напоминание: {r['text']}", r["at"])
         console.print(
-            f"[cyan]Напоминание:[/cyan] [{r['id'][:8]}] {r['text']} — { _human(r['at']) }"
+            f"[cyan]Напоминание:[/cyan] [{r['id'][:8]}] {r['text']} — {_human(r['at'])}"
         )
         return True
 
@@ -362,7 +363,7 @@ def slash_command(text: str) -> bool:
         else:
             for r in rems:
                 console.print(
-                    f"🔔 [{r['id'][:8]}] {r['text']} — { _human(r['at']) }"
+                    f"🔔 [{r['id'][:8]}] {r['text']} — {_human(r['at'])}"
                 )
         return True
 
@@ -488,7 +489,8 @@ def process_free_text(user_text: str) -> None:
             )
             schedule_console_notification(f"Событие: {ev['title']}", ev["start"])
             console.print(
-                f"[blue]Событие:[/blue] [{ev['id'][:8]}] {ev['title']} — {_human(ev['start'])} ({ev['duration_min']} мин)"
+                f"[blue]Событие:[/blue] [{ev['id'][:8]}] {ev['title']} — "
+                f"{_human(ev['start'])} ({ev['duration_min']} мин)"
             )
         elif intent == "agenda":
             day = payload.get("day", "today")

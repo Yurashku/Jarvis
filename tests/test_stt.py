@@ -28,6 +28,7 @@ def test_ensure_wav_calls_ffmpeg(monkeypatch, tmp_path):
     src = tmp_path / "a.mp3"
     src.write_bytes(b"data")
     calls = []
+
     def fake_run(cmd, check, stdout, stderr):
         calls.append(cmd)
     monkeypatch.setattr(stt.subprocess, "run", fake_run)
